@@ -1,4 +1,3 @@
-const redisClient = require("../config/redistClient");
 const db = require("../config/db");
 
 // Test API Connectivity
@@ -21,22 +20,6 @@ exports.testDB = (req, res) => {
     res.status(200).json({
       message: "Database is connected!",
       results,
-    });
-  });
-};
-
-// Test Redis (Memstore) Connectivity
-exports.testRedis = (req, res) => {
-  redisClient.ping((err, reply) => {
-    if (err) {
-      return res.status(500).json({
-        message: "Redis connection failed!",
-        error: err.message,
-      });
-    }
-    res.status(200).json({
-      message: "Redis is connected!",
-      reply,
     });
   });
 };

@@ -1,22 +1,10 @@
 "use strict";
-
 const pubsub = require("../config/googleCloud");
 const Routine = require("../models/routineModel");
 const Product = require("../models/productModel");
-const User = require("../models/userModel");
+const User  = require("../models/userModel");
 
-const ERROR_MESSAGES = {
-  userNotFound: "User not found.",
-  productNotFound: "Product not found.",
-  invalidParameters: "User ID, Product ID, and Category are required.",
-  routineExists: "Routine already exists.",
-  noRoutinesFound: "No routines found for the user.",
-  skinTypeMismatch: (userSkin, productSkin) =>
-    `Skin type mismatch: Product skin type is "${productSkin}" but user's skin type is "${userSkin}".`,
-  categoryMismatch: (category) =>
-    `Product does not match the provided category "${category}".`,
-};
-
+// Get Product Recommendations for Each Selected Category
 exports.getRecommendedProducts = async (req, res) => {
   const { user_id, category } = req.params;
 
@@ -37,93 +25,74 @@ exports.getRecommendedProducts = async (req, res) => {
   }
 };
 
-const validateUserAndProduct = async (user_id, product_id) => {
-  const [user, product] = await Promise.all([
-    User.findUserById(user_id),
-    Product.findProductById(product_id),
-  ]);
-
-  if (!user) throw new Error(ERROR_MESSAGES.userNotFound);
-  if (!product) throw new Error(ERROR_MESSAGES.productNotFound);
-  return { user, product };
-};
-
-// Generic routine addition handler
-const addRoutine = async (req, res, routineType) => {
+// Add Product Based on the Selected Category into the User's Day Routine
+exports.DayRoutine = async (req, res) => {
   const { user_id, category, product_id } = req.params;
-
   if (!user_id || !product_id || !category) {
-    return res.status(400).json({ message: ERROR_MESSAGES.invalidParameters });
+    return res.status(400).json({
+      message: "User ID, Product ID, and Category are required",
+    });
   }
 
   try {
-    const { user, product } = await validateUserAndProduct(user_id, product_id);
+    const user = await User.findUserById(user_id);
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
+
+    const product = await Product.findProductById(product_id);
+    if (!product) {
+      return res.status(400).json({ message: "Product not found" });
+    }
 
     if (user.skin_type !== product.skin_type) {
       return res.status(400).json({
-        message: ERROR_MESSAGES.skinTypeMismatch(
-          user.skin_type,
-          product.skin_type
-        ),
+        message: `Skin type mismatch: Product skin type is "${product.skin_type}" but user's skin type is "${user.skin_type}".`,
       });
     }
 
     if (product.category !== category) {
       return res.status(400).json({
-        message: ERROR_MESSAGES.categoryMismatch(category),
+        message: `Product does not match the provided category "${category}"`,
       });
     }
 
-    const findRoutineMethod =
-      routineType === "day"
-        ? Routine.findDayRoutineByUserAndProduct
-        : Routine.findNightRoutineByUserAndProduct;
-
-    const existingRoutine = await findRoutineMethod(user_id, product_id);
+    const existingRoutine = await Routine.findDayRoutineByUserAndProduct(
+      user_id,
+      product_id
+    );
     if (existingRoutine) {
-      return res.status(400).json({ message: ERROR_MESSAGES.routineExists });
+      return res.status(400).json({ message: "Routine already exists" });
     }
 
-    const addRoutineMethod =
-      routineType === "day"
-        ? Routine.addDayRoutine
-        : Routine.addNightRoutine;
-
-    await addRoutineMethod(user_id, product_id, category);
-    res.json({ message: `${routineType} Routine added successfully`, product });
+    await Routine.addDayRoutine(user_id, product_id, category);
+    res.json({ message: "Day Routine added successfully", product });
   } catch (error) {
-    console.error(`Error adding ${routineType} routine:`, error);
-    res.status(500).json({ message: "Error adding routine" });
+    console.error("Error adding routine:", error);
+    res.status(500).json({
+      message: "Error adding routine",
+    });
   }
 };
 
-// Handler implementations
-exports.DayRoutine = (req, res) => addRoutine(req, res, "day");
-exports.NightRoutine = (req, res) => addRoutine(req, res, "night");
-
-// Generic routine deletion handler
-const deleteRoutine = async (req, res, routineType) => {
+//Delete All User's Day Routines
+exports.DeleteDayRoutine = async (req, res) => {
   const { user_id } = req.params;
 
   try {
     const user = await User.findUserById(user_id);
     if (!user) {
-      return res.status(404).json({ message: ERROR_MESSAGES.userNotFound });
+      return res.status(404).json({ message: "User Not Found" });
     }
-
-    const getRoutinesMethod =
-      routineType === "day"
-        ? Routine.getDayRoutinesByUserId
-        : Routine.getNightRoutinesByUserId;
-
-    const routines = await getRoutinesMethod(user_id);
+    const routines = await Routine.getDayRoutinesByUserId(user_id);
     if (!routines || routines.length === 0) {
-      return res.status(404).json({ message: ERROR_MESSAGES.noRoutinesFound });
+      return res
+        .status(404)
+        .json({ message: "No routines found for the user" });
     }
-
     const message = {
-      user_id,
-      action: `${routineType}`,
+      user_id: user_id,
+      action: "deleted_day_routine",
       routines: routines.map((routine) => ({
         product_name: routine.name_product,
         category: routine.category,
@@ -132,51 +101,139 @@ const deleteRoutine = async (req, res, routineType) => {
 
     const dataBuffer = Buffer.from(JSON.stringify(message));
     await pubsub.topic("routine-deleted-topic").publish(dataBuffer);
+    await Routine.deleteDayRoutinesByUserId(user_id);
 
-    const deleteRoutinesMethod =
-      routineType === "Day"
-        ? Routine.deleteDayRoutinesByUserId
-        : Routine.deleteNightRoutinesByUserId;
-
-    await deleteRoutinesMethod(user_id);
-
-    res.status(202).json({
-      message: `${routineType.charAt(0).toUpperCase()}${routineType.slice(
-        1
-      )} Routine Deleted Successfully`,
-    });
+    res.status(202).json({ message: "Day Routine Deleted Successfully" });
   } catch (error) {
-    console.error(`Error deleting ${routineType} routine:`, error);
-    res.status(500).json({ message: "Error deleting routine" });
+    console.error("Error Deleting Day Routine", error);
+    res.status(500).json({
+      message: "Error Deleting Day Routine",
+    });
   }
 };
 
-// Handler implementations
-exports.DeleteDayRoutine = (req, res) => deleteRoutine(req, res, "day");
-exports.DeleteNightRoutine = (req, res) => deleteRoutine(req, res, "night");
+// Add Product Based on the Selected Category into the User's Night Routine
+exports.NightRoutine = async (req, res) => {
+  const { user_id, category, product_id } = req.params;
 
-// Generic routine fetching handler
-const fetchRoutines = async (req, res, routineType) => {
-  const { user_id } = req.params;
-
-  if (!user_id) {
-    return res.status(400).json({ message: ERROR_MESSAGES.invalidParameters });
+  if (!user_id || !product_id || !category) {
+    return res.status(400).json({
+      message: "User ID, Product ID, and Category are required",
+    });
   }
 
   try {
-    const getRoutinesMethod =
-      routineType === "day"
-        ? Routine.getDayRoutinesByUserId
-        : Routine.getNightRoutinesByUserId;
+    const user = await User.findUserById(user_id);
+    if (!user) {
+      return res.status(400).json({ message: "User not found" });
+    }
 
-    const routines = await getRoutinesMethod(user_id);
-    res.json({ routines });
+    const product = await Product.findProductById(product_id);
+    if (!product) {
+      return res.status(400).json({ message: "Product not found" });
+    }
+
+    if (user.skin_type !== product.skin_type) {
+      return res.status(400).json({
+        message: `Skin type mismatch: Product skin type is "${product.skin_type}" but user's skin type is "${user.skin_type}".`,
+      });
+    }
+
+    if (product.category !== category) {
+      return res.status(400).json({
+        message: `Product does not match the provided category "${category}"`,
+      });
+    }
+
+    const existingRoutine = await Routine.findNightRoutineByUserAndProduct(
+      user_id,
+      product_id
+    );
+    if (existingRoutine) {
+      return res.status(400).json({ message: "Routine already exists" });
+    }
+
+    await Routine.addNightRoutine(user_id, product_id, category);
+    res.json({ message: "Night Routine added successfully", product });
   } catch (error) {
-    console.error(`Error fetching ${routineType} routines:`, error);
-    res.status(500).json({ message: `Error fetching ${routineType} routines` });
+    console.error("Error adding routine:", error);
+    res.status(500).json({
+      message: "Error adding routine",
+    });
   }
 };
 
-// Handler implementations
-exports.getUserDayRoutines = (req, res) => fetchRoutines(req, res, "day");
-exports.getUserNightRoutines = (req, res) => fetchRoutines(req, res, "night");
+//Delete All User's Night Routines
+exports.DeleteNightRoutine = async (req, res) => {
+  const { user_id } = req.params;
+
+  try {
+    const user = await User.findUserById(user_id);
+    if (!user) {
+      return res.status(404).json({ message: "User Not Found" });
+    }
+    const routines = await Routine.getNightRoutinesByUserId(user_id);
+    if (!routines || routines.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No routines found for the user" });
+    }
+    const message = {
+      user_id: user_id,
+      action: "deleted_night_routine",
+      routines: routines.map((routine) => ({
+        product_name: routine.name_product,
+        category: routine.category,
+      })),
+    };
+
+    const dataBuffer = Buffer.from(JSON.stringify(message));
+    await pubsub.topic("routine-deleted-topic").publish(dataBuffer);
+    await Routine.deleteNightRoutinesByUserId(user_id);
+
+    res.status(202).json({ message: "Night Routine Deleted Successfully" });
+  } catch (error) {
+    console.error("Error Deleting Night Routine", error);
+    res.status(500).json({
+      message: "Error Deleting Night Routine",
+    });
+  }
+};
+
+// Get All User's Day Routines
+exports.getUserDayRoutines = async (req, res) => {
+  const { user_id } = req.params;
+
+  if (!user_id) {
+    return res.status(400).json({ message: "User ID is required" });
+  }
+
+  try {
+    const routines = await Routine.getDayRoutinesByUserId(user_id);
+    res.json({ routines });
+  } catch (error) {
+    console.error("Error fetching user routines:", error);
+    res.status(500).json({
+      message: "Error fetching user routines",
+    });
+  }
+};
+
+// Get All User's Night Routines
+exports.getUserNightRoutines = async (req, res) => {
+  const { user_id } = req.params;
+
+  if (!user_id) {
+    return res.status(400).json({ message: "User ID is required" });
+  }
+
+  try {
+    const routines = await Routine.getNightRoutinesByUserId(user_id);
+    res.json({ routines });
+  } catch (error) {
+    console.error("Error fetching user routines:", error);
+    res.status(500).json({
+      message: "Error fetching user routines",
+    });
+  }
+};

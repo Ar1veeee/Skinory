@@ -1,7 +1,6 @@
 const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middlewares/authMiddleware");
-const asyncHandler = require("../middlewares/asyncHandler");
 const {
   getRecommendedProducts,
   DayRoutine,
@@ -12,35 +11,17 @@ const {
   DeleteNightRoutine,
 } = require("../controllers/routineController");
 
-// Middleware untuk memverifikasi token
-router.use(verifyToken);
+router.use(verifyToken);  
 
-// Route untuk rutinitas harian
-router
-  .route("/:user_id/day")
-  .get(asyncHandler(getUserDayRoutines))
-  .delete(asyncHandler(DeleteDayRoutine));
+router.get("/:user_id/day", getUserDayRoutines);
+router.delete("/:user_id/day", DeleteDayRoutine);
 
-// Route untuk rutinitas malam
-router
-  .route("/:user_id/night")
-  .get(asyncHandler(getUserNightRoutines))
-  .delete(asyncHandler(DeleteNightRoutine));
+router.get("/:user_id/night", getUserNightRoutines);
+router.delete("/:user_id/night", DeleteNightRoutine);
 
-// Route untuk mendapatkan rekomendasi produk
-router.get(
-  "/:user_id/:category",
-  asyncHandler(getRecommendedProducts)
-);
+router.get("/:user_id/:category", getRecommendedProducts);
 
-// Route untuk menambahkan produk ke rutinitas harian dan malam
-router.post(
-  "/:user_id/:category/day/:product_id",
-  asyncHandler(DayRoutine)
-);
-router.post(
-  "/:user_id/:category/night/:product_id",
-  asyncHandler(NightRoutine)
-);
+router.post("/:user_id/:category/day/:product_id", DayRoutine);
+router.post("/:user_id/:category/night/:product_id", NightRoutine);
 
 module.exports = router;
